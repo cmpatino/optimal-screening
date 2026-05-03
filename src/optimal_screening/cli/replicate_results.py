@@ -103,7 +103,7 @@ def main() -> None:
     )
     _run([python, "scripts/plot_figures.py", "--runs-dir", "runs/"], env)
 
-    print("\nPaper artifacts and plots written to runs/")
+    print("\nPaper results and plots written to runs/")
 
 
 if __name__ == "__main__":

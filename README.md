@@ -19,7 +19,7 @@ The project targets Python 3.11.
 Run the full no-input replication pipeline:
 
 ```bash
-uv run replicate-plots
+uv run replicate-results
 ```
 
 This writes JSON artifacts and PNG figures to `runs/`.
@@ -80,7 +80,7 @@ Config fields:
 ## Repository Map
 
 - `src/optimal_screening/analysis/stratified.py`: core screening algorithms.
-- `src/optimal_screening/cli/`: `replicate-plots` and `calculate-risk` entry points.
+- `src/optimal_screening/cli/`: `replicate-results` and `calculate-risk` entry points.
 - `scripts/`: standalone artifact and plotting scripts.
 - `configs/`: example risk-curve configuration.
 - `tests/`: focused unit tests for the core algorithm and risk CLI.
