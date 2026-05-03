@@ -22,7 +22,7 @@ dependencies = [
 
 [project.scripts]
 replicate-results = "optimal_screening.cli.replicate_results:main"
-calculate-risk = "optimal_screening.cli.calculate_risk:main"
+get-optimal-screening = "optimal_screening.cli.get_optimal_screening:main"
 
 [dependency-groups]
 dev = [

@@ -7,11 +7,12 @@ from typing import Any
 
 import yaml
 
-from optimal_screening.analysis import compute_optimal_screening_curve
+from optimal_screening.analysis import compute_optimal_screening_actions
 from optimal_screening.data_sources import load_dataframe
 
 
-REQUIRED_FIELDS = {"outcome", "strata", "beta"}
+REQUIRED_FIELDS = {"alpha", "beta", "outcome", "strata"}
+DEFAULT_ACTION_COL = "screening_decision"
 
 
 def _read_config(path: Path) -> dict[str, Any]:
@@ -31,15 +32,10 @@ def _read_config(path: Path) -> dict[str, Any]:
     return data
 
 
-def _as_float_sequence(values: Any, field: str) -> list[float] | None:
-    if values is None:
-        return None
-    if not isinstance(values, list | tuple):
-        raise ValueError(f"{field} must be a list of numbers")
-    return [float(value) for value in values]
-
-
 def _validate_config(config: dict[str, Any]) -> dict[str, Any]:
+    if "alpha_quantiles" in config:
+        raise ValueError("Use alpha for one screening budget; alpha_quantiles is only for curve outputs")
+
     missing = sorted(REQUIRED_FIELDS - set(config))
     if missing:
         raise ValueError(f"Missing required config fields: {missing}")
@@ -57,11 +53,13 @@ def _validate_config(config: dict[str, Any]) -> dict[str, Any]:
     if not 0 < beta <= 1:
         raise ValueError("beta must be in the interval (0, 1]")
 
-    alpha_quantiles = _as_float_sequence(config.get("alpha_quantiles"), "alpha_quantiles")
-    if alpha_quantiles is not None:
-        invalid = [alpha for alpha in alpha_quantiles if alpha < 0 or alpha > beta]
-        if invalid:
-            raise ValueError(f"alpha_quantiles must be between 0 and beta={beta}; invalid values: {invalid}")
+    alpha = float(config["alpha"])
+    if not 0 <= alpha <= beta:
+        raise ValueError(f"alpha must be between 0 and beta={beta}")
+
+    action_col = str(config.get("action_col", DEFAULT_ACTION_COL))
+    if not action_col:
+        raise ValueError("action_col must not be empty")
 
     return {
         "csv": str(config["csv"]) if has_csv else None,
@@ -71,24 +69,15 @@ def _validate_config(config: dict[str, Any]) -> dict[str, Any]:
         "outcome": str(config["outcome"]),
         "strata": strata,
         "beta": beta,
+        "alpha": alpha,
         "prediction_col": str(config.get("prediction_col", "probability")),
         "risk_col": str(config["risk_col"]) if config.get("risk_col") is not None else None,
-        "alpha_quantiles": alpha_quantiles,
-        "output": str(config.get("output", "runs/optimal_screening_curve.json")),
+        "action_col": action_col,
+        "output": str(config.get("output", "runs/optimal_screening.csv")),
     }
 
 
-def _json_safe(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {key: _json_safe(item) for key, item in value.items()}
-    if isinstance(value, list | tuple):
-        return [_json_safe(item) for item in value]
-    if hasattr(value, "item"):
-        return value.item()
-    return value
-
-
-def calculate_from_config(config_path: Path) -> Path:
+def get_optimal_screening_from_config(config_path: Path) -> Path:
     config = _validate_config(_read_config(config_path))
 
     df, dataset_label = load_dataframe(
@@ -108,28 +97,31 @@ def calculate_from_config(config_path: Path) -> Path:
     if missing_cols:
         raise ValueError(f"Missing required columns in {dataset_label}: {missing_cols}")
 
-    result = compute_optimal_screening_curve(
+    if config["action_col"] in df.columns:
+        raise ValueError(f"Output action column already exists in {dataset_label}: {config['action_col']}")
+
+    df[config["action_col"]] = compute_optimal_screening_actions(
         rows=df.to_dict("records"),
         outcome_col=config["outcome"],
         strata_features=config["strata"],
         prediction_col=config["prediction_col"],
         beta=config["beta"],
-        alpha_quantiles=config["alpha_quantiles"],
+        alpha=config["alpha"],
         use_custom_risk_col=config["risk_col"],
     )
 
     output_path = Path(config["output"])
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(_json_safe(result), indent=2))
+    df.to_csv(output_path, index=False)
     return output_path
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Compute an optimal screening curve from a YAML or JSON config")
+    parser = argparse.ArgumentParser(description="Write optimal screening actions from a YAML or JSON config")
     parser.add_argument("config", help="Path to a YAML or JSON config file")
     args = parser.parse_args()
 
-    output_path = calculate_from_config(Path(args.config))
+    output_path = get_optimal_screening_from_config(Path(args.config))
     print(f"Wrote {output_path}")
 
 

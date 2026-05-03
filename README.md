@@ -60,15 +60,20 @@ uv run python scripts/run_tabular_models.py --hf-dataset cmpatino/acs-income-201
 uv run python scripts/plot_figures.py --runs-dir runs/
 ```
 
-## Compute An Optimal Screening Curve
+## Get Optimal Screening Decisions
 
 Use a YAML or JSON config:
 
 ```bash
-uv run calculate-risk configs/example-risk.yaml
+uv run get-optimal-screening configs/example-risk.yaml
 ```
 
-The example config writes `runs/example-risk-output.json`.
+The example config writes `runs/example-risk-output.csv`.
+The output is the input table with one additional `screening_decision` column:
+
+- `0`: ignore
+- `1`: treat directly
+- `2`: screen
 
 Config fields:
 
@@ -78,15 +83,16 @@ Config fields:
 - `outcome`: binary outcome column.
 - `strata`: columns used to estimate empirical risk strata.
 - `beta`: treatment budget, between 0 and 1.
-- `alpha_quantiles`: optional screening budgets; every value must be between 0 and `beta`.
+- `alpha`: screening budget, between 0 and `beta`.
 - `risk_col`: optional column containing precomputed risk scores.
 - `prediction_col`: optional model prediction column, default `probability`.
-- `output`: optional output JSON path, default `runs/optimal_screening_curve.json`.
+- `action_col`: optional output decision column name, default `screening_decision`.
+- `output`: optional output CSV path, default `runs/optimal_screening.csv`.
 
 ## Repository Map
 
 - `src/optimal_screening/analysis/stratified.py`: core screening algorithms.
-- `src/optimal_screening/cli/`: `replicate-results` and `calculate-risk` entry points.
+- `src/optimal_screening/cli/`: `replicate-results` and `get-optimal-screening` entry points.
 - `scripts/`: standalone artifact and plotting scripts.
-- `configs/`: example risk-curve configuration.
-- `tests/`: focused unit tests for the core algorithm and risk CLI.
+- `configs/`: example optimal-screening configuration.
+- `tests/`: focused unit tests for the core algorithm and screening CLI.

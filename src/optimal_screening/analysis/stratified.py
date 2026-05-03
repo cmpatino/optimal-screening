@@ -130,6 +130,197 @@ def generate_simulation_data(
     return risk_scores, outcomes
 
 
+def _build_rows_with_risk(
+    rows: list[dict[str, Any]],
+    outcome_col: str,
+    strata_features: Sequence[str],
+    prediction_col: str,
+    seed: int | None,
+    use_custom_risk_col: str | None,
+    simulation: str | tuple[float, float] | None,
+) -> list[dict[str, Any]]:
+    rows_with_risk = []
+
+    if simulation is not None:
+        # Generate synthetic data from a Beta distribution
+        if isinstance(simulation, str):
+            if simulation not in RISK_PRESETS:
+                raise ValueError(f"Unknown simulation preset '{simulation}'. Choose from {list(RISK_PRESETS.keys())}.")
+            preset = RISK_PRESETS[simulation]
+        else:
+            preset = simulation
+
+        if isinstance(preset, (int, float)):
+            risk_scores, outcomes = generate_simulation_data(size=SIMULATION_SIZE, seed=seed, point_mass=float(preset))
+        else:
+            a, b = preset
+            risk_scores, outcomes = generate_simulation_data(a, b, size=SIMULATION_SIZE, seed=seed)
+
+        for i in range(SIMULATION_SIZE):
+            rows_with_risk.append(
+                {
+                    "row": {"_sim_index": i, "_sim_feature": 0, outcome_col: bool(outcomes[i])},
+                    "empirical_risk": float(risk_scores[i]),
+                    "true_outcome": bool(outcomes[i]),
+                    "model_prediction": float(risk_scores[i]),
+                    "_input_index": i,
+                }
+            )
+    elif use_custom_risk_col is not None:
+        # Use custom risk column directly
+        for input_index, row in enumerate(rows):
+            risk = row.get(use_custom_risk_col, 0.5)
+            rows_with_risk.append(
+                {
+                    "row": row,
+                    "empirical_risk": risk,
+                    "true_outcome": _is_positive_outcome(row.get(outcome_col)),
+                    "model_prediction": row.get(prediction_col, 0.5),
+                    "_input_index": input_index,
+                }
+            )
+    else:
+        # Compute empirical P(Y=1|X) for each stratum
+        empirical_probs = compute_empirical_probabilities(rows, outcome_col, strata_features)
+
+        for input_index, row in enumerate(rows):
+            stratum_key = tuple(row.get(f) for f in strata_features)
+            empirical_risk = empirical_probs.get(stratum_key, {}).get("probability", 0.5)
+
+            rows_with_risk.append(
+                {
+                    "row": row,
+                    "empirical_risk": empirical_risk,
+                    "true_outcome": _is_positive_outcome(row.get(outcome_col)),
+                    "model_prediction": row.get(prediction_col, 0.5),
+                    "_input_index": input_index,
+                }
+            )
+
+    return rows_with_risk
+
+
+def _end_index_for_target_mass(n: int, target_mass: float) -> int:
+    if n <= 0 or target_mass <= 0:
+        return 0
+
+    cumulative_mass = 0.0
+    for i in range(n):
+        cumulative_mass += 1.0 / n
+        if cumulative_mass >= target_mass:
+            return i + 1
+    return n
+
+
+def _find_optimal_band_indices(
+    rows_with_risk: list[dict[str, Any]],
+    beta: float,
+    alpha: float,
+    max_iterations: int,
+    tolerance: float,
+) -> tuple[int, int, int, float]:
+    assert alpha <= beta, f"Screening budget α={alpha} exceeds treatment budget β={beta}"
+
+    n = len(rows_with_risk)
+    if n == 0:
+        return 0, 0, 0, 0.0
+
+    prev_avg_risk = 0.0
+    band1_end_idx = 0
+    band2_end_idx = 0
+    band3_end_idx = 0
+    avg_risk_band3 = 0.0
+
+    for _iteration in range(max_iterations):
+        # Compute target mass: ∫ f(risk) d(risk) = target
+        # Where f(risk) is the density over risk values
+        # For discrete: sum of (count at each risk / total count) = proportion of population at that risk
+        band1_target_mass = beta - alpha
+        # Band 2 size: ∫ 1 × f(risk) d(risk) over Band 2 = ∫ (1 - risk) × f(risk) d(risk) over Band 3
+        # Since Band 3 has mass α and average risk prev_avg_risk:
+        # ∫ (1 - risk) × f(risk) d(risk) over Band 3 = α × (1 - prev_avg_risk)
+        band2_target_mass = alpha * (1 - prev_avg_risk)
+        band3_target_mass = alpha
+
+        band1_end_idx = _end_index_for_target_mass(n, band1_target_mass)
+        band2_end_idx = _end_index_for_target_mass(n, band1_target_mass + band2_target_mass)
+        band3_end_idx = _end_index_for_target_mass(n, band1_target_mass + band2_target_mass + band3_target_mass)
+
+        # Ensure indices are ordered and within bounds
+        band1_end_idx = min(band1_end_idx, n)
+        band2_end_idx = max(band1_end_idx, min(band2_end_idx, n))
+        band3_end_idx = max(band2_end_idx, min(band3_end_idx, n))
+
+        # Compute average risk of Band 3
+        if band3_end_idx > band2_end_idx:
+            band3_risks = [rows_with_risk[i]["empirical_risk"] for i in range(band2_end_idx, band3_end_idx)]
+            current_avg_risk = np.mean(band3_risks) if band3_risks else 0.0
+        else:
+            current_avg_risk = 0.0
+
+        avg_risk_band3 = current_avg_risk
+
+        # Check convergence
+        if abs(current_avg_risk - prev_avg_risk) < tolerance:
+            break
+
+        prev_avg_risk = current_avg_risk
+
+    return band1_end_idx, band2_end_idx, band3_end_idx, avg_risk_band3
+
+
+def compute_optimal_screening_actions(
+    rows: list[dict[str, Any]],
+    outcome_col: str,
+    strata_features: Sequence[str],
+    prediction_col: str = "probability",
+    beta: float = 0.5,
+    alpha: float = 0.0,
+    max_iterations: int = 20,
+    tolerance: float = 1e-6,
+    seed: int | None = None,
+    use_custom_risk_col: str | None = None,
+    simulation: str | tuple[float, float] | None = None,
+) -> list[int]:
+    """Compute one optimal screening allocation.
+
+    Returns one action per input row, preserving input order:
+    - 0: ignore
+    - 1: treat directly
+    - 2: screen
+    """
+    rows_with_risk = _build_rows_with_risk(
+        rows=rows,
+        outcome_col=outcome_col,
+        strata_features=strata_features,
+        prediction_col=prediction_col,
+        seed=seed,
+        use_custom_risk_col=use_custom_risk_col,
+        simulation=simulation,
+    )
+    rows_with_risk.sort(key=lambda x: x["empirical_risk"], reverse=True)
+
+    _band1_end_idx, band2_end_idx, band3_end_idx, _avg_risk_band3 = _find_optimal_band_indices(
+        rows_with_risk=rows_with_risk,
+        beta=beta,
+        alpha=alpha,
+        max_iterations=max_iterations,
+        tolerance=tolerance,
+    )
+
+    actions_by_input_index: dict[int, int] = {}
+    for sorted_index, item in enumerate(rows_with_risk):
+        if sorted_index < band2_end_idx:
+            action = 1
+        elif sorted_index < band3_end_idx:
+            action = 2
+        else:
+            action = 0
+        actions_by_input_index[item["_input_index"]] = action
+
+    return [actions_by_input_index[i] for i in range(len(rows_with_risk))]
+
+
 def compute_optimal_screening_curve(
     rows: list[dict[str, Any]],
     outcome_col: str,
@@ -178,60 +369,15 @@ def compute_optimal_screening_curve(
         alpha_quantiles = [beta * i / 49 for i in range(50)]
 
     # Assign each row its risk (simulation, custom, or empirical)
-    rows_with_risk = []
-
-    if simulation is not None:
-        # Generate synthetic data from a Beta distribution
-        if isinstance(simulation, str):
-            if simulation not in RISK_PRESETS:
-                raise ValueError(f"Unknown simulation preset '{simulation}'. Choose from {list(RISK_PRESETS.keys())}.")
-            preset = RISK_PRESETS[simulation]
-        else:
-            preset = simulation
-
-        if isinstance(preset, (int, float)):
-            risk_scores, outcomes = generate_simulation_data(size=SIMULATION_SIZE, seed=seed, point_mass=float(preset))
-        else:
-            a, b = preset
-            risk_scores, outcomes = generate_simulation_data(a, b, size=SIMULATION_SIZE, seed=seed)
-
-        for i in range(SIMULATION_SIZE):
-            rows_with_risk.append(
-                {
-                    "row": {"_sim_index": i, "_sim_feature": 0, outcome_col: bool(outcomes[i])},
-                    "empirical_risk": float(risk_scores[i]),
-                    "true_outcome": bool(outcomes[i]),
-                    "model_prediction": float(risk_scores[i]),
-                }
-            )
-    elif use_custom_risk_col is not None:
-        # Use custom risk column directly
-        for row in rows:
-            risk = row.get(use_custom_risk_col, 0.5)
-            rows_with_risk.append(
-                {
-                    "row": row,
-                    "empirical_risk": risk,
-                    "true_outcome": _is_positive_outcome(row.get(outcome_col)),
-                    "model_prediction": row.get(prediction_col, 0.5),
-                }
-            )
-    else:
-        # Compute empirical P(Y=1|X) for each stratum
-        empirical_probs = compute_empirical_probabilities(rows, outcome_col, strata_features)
-
-        for row in rows:
-            stratum_key = tuple(row.get(f) for f in strata_features)
-            empirical_risk = empirical_probs.get(stratum_key, {}).get("probability", 0.5)
-
-            rows_with_risk.append(
-                {
-                    "row": row,
-                    "empirical_risk": empirical_risk,
-                    "true_outcome": _is_positive_outcome(row.get(outcome_col)),
-                    "model_prediction": row.get(prediction_col, 0.5),
-                }
-            )
+    rows_with_risk = _build_rows_with_risk(
+        rows=rows,
+        outcome_col=outcome_col,
+        strata_features=strata_features,
+        prediction_col=prediction_col,
+        seed=seed,
+        use_custom_risk_col=use_custom_risk_col,
+        simulation=simulation,
+    )
 
     # Sort by risk (highest to lowest)
     rows_with_risk.sort(key=lambda x: x["empirical_risk"], reverse=True)
@@ -250,77 +396,13 @@ def compute_optimal_screening_curve(
     }
 
     for alpha in alpha_quantiles:
-        assert alpha <= beta, f"Screening budget α={alpha} exceeds treatment budget β={beta}"
-
-        # Iteratively find Band 3 position.
-        prev_avg_risk = 0.0
-
-        for _iteration in range(max_iterations):
-            # Compute target mass: ∫ f(risk) d(risk) = target
-            # Where f(risk) is the density over risk values
-            # For discrete: sum of (count at each risk / total count) = proportion of population at that risk
-            band1_target_mass = beta - alpha
-            # Band 2 size: ∫ 1 × f(risk) d(risk) over Band 2 = ∫ (1 - risk) × f(risk) d(risk) over Band 3
-            # Since Band 3 has mass α and average risk prev_avg_risk:
-            # ∫ (1 - risk) × f(risk) d(risk) over Band 3 = α × (1 - prev_avg_risk)
-            band2_target_mass = alpha * (1 - prev_avg_risk)
-            band3_target_mass = alpha
-
-            # Band 1: Find index where cumulative proportion of population = band1_target_mass
-            # This is: ∫ f(risk) d(risk) from risk=1 down to some risk threshold
-            cumulative_mass = 0.0
-            band1_end_idx = 0
-            for i in range(n):
-                # Each person contributes 1/n to the density (proportion of population)
-                population_contribution = 1.0 / n
-                cumulative_mass += population_contribution
-                if cumulative_mass >= band1_target_mass:
-                    band1_end_idx = i + 1
-                    break
-            if band1_end_idx == 0 and band1_target_mass > 0:
-                band1_end_idx = 1  # At least one person
-
-            # Band 2: Continue from Band 1 end
-            target_mass_band1_plus_band2 = band1_target_mass + band2_target_mass
-            band2_end_idx = band1_end_idx
-            for i in range(band1_end_idx, n):
-                population_contribution = 1.0 / n
-                cumulative_mass += population_contribution
-                if cumulative_mass >= target_mass_band1_plus_band2:
-                    band2_end_idx = i + 1
-                    break
-
-            # Band 3: Continue from Band 2 end
-            target_mass_band1_plus_band2_plus_band3 = band1_target_mass + band2_target_mass + band3_target_mass
-            band3_end_idx = band2_end_idx
-            for i in range(band2_end_idx, n):
-                population_contribution = 1.0 / n
-                cumulative_mass += population_contribution
-                if cumulative_mass >= target_mass_band1_plus_band2_plus_band3:
-                    band3_end_idx = i + 1
-                    break
-
-            # Ensure indices are within bounds
-            band1_end_idx = min(band1_end_idx, n)
-            band2_end_idx = min(band2_end_idx, n)
-            band3_end_idx = min(band3_end_idx, n)
-
-            # Compute average risk of Band 3
-            if band3_end_idx > band2_end_idx:
-                band3_risks = [rows_with_risk[i]["empirical_risk"] for i in range(band2_end_idx, band3_end_idx)]
-                current_avg_risk = np.mean(band3_risks) if band3_risks else 0.0
-            else:
-                current_avg_risk = 0.0
-
-            # Check convergence
-            if abs(current_avg_risk - prev_avg_risk) < tolerance:
-                break
-
-            prev_avg_risk = current_avg_risk
-
-        # Final band sizes (keep the indices from the last iteration)
-        # The indices are already set from the converged iteration above
-        avg_risk_band3 = prev_avg_risk
+        band1_end_idx, band2_end_idx, band3_end_idx, avg_risk_band3 = _find_optimal_band_indices(
+            rows_with_risk=rows_with_risk,
+            beta=beta,
+            alpha=alpha,
+            max_iterations=max_iterations,
+            tolerance=tolerance,
+        )
 
         # Compute integrals: ∫ risk × (1/n) dx for each band (for reporting purposes)
         band1_integral = sum(rows_with_risk[i]["empirical_risk"] / n for i in range(0, band1_end_idx))

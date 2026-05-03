@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from optimal_screening.analysis import compute_optimal_screening_curve
+from optimal_screening.analysis import compute_optimal_screening_actions, compute_optimal_screening_curve
 
 
 def test_optimal_screening_curve_uses_custom_risk_col() -> None:
@@ -43,3 +43,23 @@ def test_optimal_screening_curve_validates_alpha_budget() -> None:
         assert "exceeds treatment budget" in str(exc)
     else:
         raise AssertionError("Expected alpha > beta to fail")
+
+
+def test_optimal_screening_actions_preserve_input_order() -> None:
+    rows = [
+        {"risk": 0.9, "outcome": 1, "group": "a"},
+        {"risk": 0.8, "outcome": 1, "group": "a"},
+        {"risk": 0.2, "outcome": 0, "group": "b"},
+        {"risk": 0.1, "outcome": 0, "group": "b"},
+    ]
+
+    actions = compute_optimal_screening_actions(
+        rows=rows,
+        outcome_col="outcome",
+        strata_features=["group"],
+        beta=0.5,
+        alpha=0.25,
+        use_custom_risk_col="risk",
+    )
+
+    assert actions == [1, 1, 2, 0]
