@@ -26,6 +26,20 @@ def test_validate_config_rejects_alpha_above_beta() -> None:
         )
 
 
+def test_validate_config_requires_one_data_source() -> None:
+    base = {
+        "outcome": "outcome",
+        "strata": ["group"],
+        "beta": 0.2,
+    }
+
+    with pytest.raises(ValueError, match="exactly one data source"):
+        _validate_config(base)
+
+    with pytest.raises(ValueError, match="exactly one data source"):
+        _validate_config(base | {"csv": "data.csv", "hf_dataset": "owner/name"})
+
+
 def test_calculate_from_json_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     Path("data").mkdir()

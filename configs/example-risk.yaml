@@ -1,16 +1,8 @@
-csv: data/acs_income_sample.csv
-outcome: PINCP > 50k
+hf_dataset: cmpatino/landmine-detection
+hf_split: train
+outcome: mines_outcome
 strata:
-  - AGEP
-  - COW
-  - SCHL
-  - MAR
-  - OCCP
-  - POBP
-  - RELP
-  - WKHP
-  - SEX
-  - RAC1P
-beta: 0.3
-alpha_quantiles: [0.0, 0.1, 0.2, 0.3]
+  - Municipio
+beta: 0.1
+alpha_quantiles: [0.0, 0.05, 0.1]
 output: runs/example-risk-output.json

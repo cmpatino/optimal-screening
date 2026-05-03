@@ -5,13 +5,13 @@ import json
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
 import yaml
 
 from optimal_screening.analysis import compute_optimal_screening_curve
+from optimal_screening.data_sources import load_dataframe
 
 
-REQUIRED_FIELDS = {"csv", "outcome", "strata", "beta"}
+REQUIRED_FIELDS = {"outcome", "strata", "beta"}
 
 
 def _read_config(path: Path) -> dict[str, Any]:
@@ -44,6 +44,11 @@ def _validate_config(config: dict[str, Any]) -> dict[str, Any]:
     if missing:
         raise ValueError(f"Missing required config fields: {missing}")
 
+    has_csv = config.get("csv") is not None
+    has_hf_dataset = config.get("hf_dataset") is not None
+    if has_csv == has_hf_dataset:
+        raise ValueError("Config must provide exactly one data source: csv or hf_dataset")
+
     strata = config["strata"]
     if not isinstance(strata, list) or not strata or not all(isinstance(item, str) for item in strata):
         raise ValueError("strata must be a non-empty list of column names")
@@ -59,7 +64,10 @@ def _validate_config(config: dict[str, Any]) -> dict[str, Any]:
             raise ValueError(f"alpha_quantiles must be between 0 and beta={beta}; invalid values: {invalid}")
 
     return {
-        "csv": str(config["csv"]),
+        "csv": str(config["csv"]) if has_csv else None,
+        "hf_dataset": str(config["hf_dataset"]) if has_hf_dataset else None,
+        "hf_split": str(config.get("hf_split", "train")),
+        "hf_revision": str(config["hf_revision"]) if config.get("hf_revision") is not None else None,
         "outcome": str(config["outcome"]),
         "strata": strata,
         "beta": beta,
@@ -83,11 +91,13 @@ def _json_safe(value: Any) -> Any:
 def calculate_from_config(config_path: Path) -> Path:
     config = _validate_config(_read_config(config_path))
 
-    csv_path = Path(config["csv"])
-    if not csv_path.exists():
-        raise FileNotFoundError(f"CSV file not found: {csv_path}")
+    df, dataset_label = load_dataframe(
+        csv_path=config["csv"],
+        hf_dataset=config["hf_dataset"],
+        hf_split=config["hf_split"],
+        hf_revision=config["hf_revision"],
+    )
 
-    df = pd.read_csv(csv_path)
     required_cols = {config["outcome"], *config["strata"]}
     if config["risk_col"]:
         required_cols.add(config["risk_col"])
@@ -96,7 +106,7 @@ def calculate_from_config(config_path: Path) -> Path:
 
     missing_cols = sorted(required_cols - set(df.columns))
     if missing_cols:
-        raise ValueError(f"Missing required columns in {csv_path}: {missing_cols}")
+        raise ValueError(f"Missing required columns in {dataset_label}: {missing_cols}")
 
     result = compute_optimal_screening_curve(
         rows=df.to_dict("records"),

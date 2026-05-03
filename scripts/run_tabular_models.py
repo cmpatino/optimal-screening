@@ -2,11 +2,11 @@
 """Train tabular baselines, compute screening curves, and save JSON artifacts.
 
 Usage:
-    python scripts/run_tabular_models.py --csv data/landmines_raw.csv --outcome mines_outcome \
+    python scripts/run_tabular_models.py --hf-dataset cmpatino/landmine-detection --outcome mines_outcome \
         --strata Municipio --beta 0.1 --test-municipio GRANADA \
         --output runs/screening_tabular_landmines_granada_test.json
 
-    python scripts/run_tabular_models.py --csv data/acs_income_2018.csv --outcome "PINCP > 50k" \
+    python scripts/run_tabular_models.py --hf-dataset cmpatino/acs-income-2018 --outcome "PINCP > 50k" \
         --strata AGEP COW SCHL MAR OCCP POBP RELP WKHP SEX RAC1P --beta 0.3 --strata-only \
         --test-size 0.5 --output runs/screening_tabular_acs2018_all_strata_50pct.json
 """
@@ -34,6 +34,7 @@ from xgboost import XGBClassifier
 sys.path.insert(0, "src")
 
 from optimal_screening.analysis import compute_optimal_screening_curve, compute_random_screening_curve
+from optimal_screening.data_sources import load_dataframe
 
 
 def _is_positive(value: Any) -> int:
@@ -98,7 +99,11 @@ def _auc_or_none(y_true: pd.Series, probabilities: np.ndarray) -> float | None:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train tabular models and compute screening curves")
-    parser.add_argument("--csv", required=True, help="Path to CSV data file")
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--csv", help="Path to a local CSV data file")
+    source.add_argument("--hf-dataset", help="Hugging Face dataset repository ID")
+    parser.add_argument("--hf-split", default="train", help="Hugging Face dataset split")
+    parser.add_argument("--hf-revision", default=None, help="Optional Hugging Face dataset revision")
     parser.add_argument("--outcome", required=True, help="Outcome column name")
     parser.add_argument("--strata", nargs="+", required=True, help="Feature columns defining risk strata")
     parser.add_argument("--beta", type=float, required=True, help="Treatment budget beta")
@@ -112,19 +117,24 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = _parse_args()
-    df = pd.read_csv(args.csv)
+    df, dataset_label = load_dataframe(
+        csv_path=args.csv,
+        hf_dataset=args.hf_dataset,
+        hf_split=args.hf_split,
+        hf_revision=args.hf_revision,
+    )
 
     required_cols = {args.outcome, *args.strata}
     missing = sorted(required_cols - set(df.columns))
     if missing:
-        raise ValueError(f"Missing required columns in {args.csv}: {missing}")
+        raise ValueError(f"Missing required columns in {dataset_label}: {missing}")
 
     outcome_col = args.outcome
     feature_cols = args.strata if args.strata_only else [col for col in df.columns if col != outcome_col]
     y = df[outcome_col].map(_is_positive).astype(int)
     features = df[feature_cols]
 
-    print(f"Dataset: {args.csv}")
+    print(f"Dataset: {dataset_label}")
     print(f"Samples: {len(features)}, Features: {features.shape[1]}, Positive rate: {y.mean():.2%}")
 
     if args.test_municipio:
@@ -207,7 +217,7 @@ def main() -> None:
         "beta": args.beta,
         "total_positive": first_result["total_positive"],
         "total_samples": first_result["total_samples"],
-        "dataset": args.csv,
+        "dataset": dataset_label,
     }
     results_to_save["risk_scores"] = {name: probs.tolist() for name, probs in model_probs.items()}
     results_to_save["risk_scores"]["y_test"] = y_test.tolist()

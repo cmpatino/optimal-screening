@@ -15,10 +15,10 @@ Usage:
     # 1. Generate JSON artifacts (only needed when rerunning experiments):
     python scripts/simulate_distributions.py
     python scripts/simulate_utility_gap.py
-    python scripts/run_tabular_models.py --csv data/landmines_raw.csv --outcome mines_outcome \
+    python scripts/run_tabular_models.py --hf-dataset cmpatino/landmine-detection --outcome mines_outcome \
         --strata Municipio --beta 0.1 --test-municipio GRANADA \
         --output runs/screening_tabular_landmines_granada_test.json
-    python scripts/run_tabular_models.py --csv data/acs_income_2018.csv --outcome "PINCP > 50k" \
+    python scripts/run_tabular_models.py --hf-dataset cmpatino/acs-income-2018 --outcome "PINCP > 50k" \
         --strata AGEP COW SCHL MAR OCCP POBP RELP WKHP SEX RAC1P --beta 0.3 --strata-only \
         --test-size 0.5 --output runs/screening_tabular_acs2018_all_strata_50pct.json
 
@@ -583,7 +583,7 @@ def plot_tabular_screening_curve(json_path: Path) -> None:
     total_pos = meta["total_positive"]
     beta = meta["beta"]
     dataset_name = Path(meta["dataset"]).stem
-    metric = "Landmines" if dataset_name == "landmines_raw" else ""
+    metric = "Landmines" if "landmine" in dataset_name else ""
 
     # All keys except "meta" and "risk_scores" are model results
     model_keys = [k for k in data if k not in ("meta", "risk_scores")]

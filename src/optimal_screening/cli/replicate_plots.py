@@ -37,8 +37,10 @@ def main() -> None:
     env.setdefault("MPLBACKEND", "Agg")
     env.setdefault("MPLCONFIGDIR", str(cache_dir / "matplotlib"))
     env.setdefault("XDG_CACHE_HOME", str(cache_dir / "xdg"))
+    env.setdefault("HF_HOME", str(cache_dir / "huggingface"))
     Path(env["MPLCONFIGDIR"]).mkdir(parents=True, exist_ok=True)
     Path(env["XDG_CACHE_HOME"]).mkdir(parents=True, exist_ok=True)
+    Path(env["HF_HOME"]).mkdir(parents=True, exist_ok=True)
 
     python = sys.executable
     _run([python, "scripts/simulate_distributions.py", "--output", "runs/simulations.json"], env)
@@ -55,8 +57,8 @@ def main() -> None:
         [
             python,
             "scripts/run_tabular_models.py",
-            "--csv",
-            "data/landmines_raw.csv",
+            "--hf-dataset",
+            "cmpatino/landmine-detection",
             "--outcome",
             "mines_outcome",
             "--strata",
@@ -74,8 +76,8 @@ def main() -> None:
         [
             python,
             "scripts/run_tabular_models.py",
-            "--csv",
-            "data/acs_income_2018.csv",
+            "--hf-dataset",
+            "cmpatino/acs-income-2018",
             "--outcome",
             "PINCP > 50k",
             "--strata",
