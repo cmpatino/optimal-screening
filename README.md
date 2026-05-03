@@ -25,6 +25,12 @@ uv run replicate-results
 This writes JSON artifacts and PNG figures to `runs/`.
 Input tabular data is downloaded from Hugging Face with the `datasets` library and cached locally by Hugging Face. The replication command sets `HF_HOME=.cache/huggingface` so the cache stays inside this project directory.
 
+Runtime and requirements:
+
+- Expect the full command to take about 15-25 minutes on a recent laptop or desktop. Most time is spent in the simulation loop and fitting the ACS 2018 tabular models.
+- The command needs internet access on the first run to download `cmpatino/landmine-detection` and `cmpatino/acs-income-2018` from Hugging Face. Later runs reuse the local `.cache/huggingface` cache unless it is removed.
+- Use Python 3.11 through `uv`. The ACS step trains on roughly 1.6 million rows, so run it on a machine with several GB of free RAM and enough disk space for the Hugging Face cache, virtual environment, and `runs/` outputs.
+
 The command generates:
 
 - `runs/simulations.json`
