@@ -131,6 +131,22 @@ assert actions == [1, 1, 2, 0]
 
 For screening curves across multiple `alpha` values, use `compute_optimal_screening_curve`.
 
+## Citation
+
+If you use this code or the optimal screening method, please cite:
+
+```bibtex
+@misc{cortesgomez2026limitsaidrivenallocationoptimal,
+      title={The Limits of AI-Driven Allocation: Optimal Screening under Aleatoric Uncertainty},
+      author={Santiago Cortes-Gomez and Mateo Dulce Rubio and Carlos Patino and Bryan Wilder},
+      year={2026},
+      eprint={2605.07979},
+      archivePrefix={arXiv},
+      primaryClass={cs.AI},
+      url={https://arxiv.org/abs/2605.07979},
+}
+```
+
 ## Reproduce Paper Results
 
 The camera-ready replication pipeline is still available:
